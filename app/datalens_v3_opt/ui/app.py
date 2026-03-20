@@ -49,6 +49,18 @@ class App(ctk.CTk):
         self.geometry("1400x860")
         self.minsize(1100, 660)
 
+        # ── Taskbar / window icon ───────────────────────────────────────────
+        try:
+            import os
+            _icon = os.path.join(os.path.dirname(os.path.abspath(
+                __file__)), "..", "..", "app_icon.ico")
+            if not os.path.exists(_icon):
+                _icon = os.path.join(C._asset_root(), "..", "app_icon.ico")
+            if os.path.exists(_icon):
+                self.iconbitmap(_icon)
+        except Exception:
+            pass
+
         # ── Load persisted settings ───────────────────────────────────────────
         settings = load_settings()
         if settings.get("theme", "dark") != C.CURRENT_THEME:
