@@ -23,7 +23,11 @@ import datalens_v3_opt.constants as C
 from datalens_v3_opt.ui.widgets import tip
 
 # ── Target directory ─────────────────────────────────────────────────────────
-ML_DIR = Path.home() / ".datalens" / "ml_packages"
+# Prefer .lib next to the app (portable/corporate), fallback to ~/.datalens/ml_packages
+import os as _os
+_app_dir = Path(_os.path.abspath(sys.argv[0])).parent.parent  # app/ -> root
+_LIB_DIR = _app_dir / ".lib"
+ML_DIR = _LIB_DIR if _LIB_DIR.exists() else Path.home() / ".datalens" / "ml_packages"
 
 # All packages in one list — pip resolves torch as a dependency automatically
 _PACKAGES = [
@@ -39,10 +43,8 @@ def ml_installed() -> bool:
     """Check if the core ML packages are available."""
     for pkg in ("sentence_transformers", "bertopic"):
         if importlib.util.find_spec(pkg) is None:
-            # Check bundled (next to exe) and user-installed directories
-            bundled = Path(sys.executable).resolve().parent / "ml_packages" / pkg
-            user = ML_DIR / pkg
-            if not bundled.exists() and not user.exists():
+            # Check .lib folder and user-installed directories
+            if not (_LIB_DIR / pkg).exists() and not (ML_DIR / pkg).exists():
                 return False
     return True
 
@@ -82,34 +84,28 @@ def _find_pip():
                 return 1
         return _run, label
 
-    # 1. Bundled runtime Python (embedded distribution shipped with the app)
-    import os
+    # 1. python on PATH — safest on corporate machines (whitelisted location)
+    py_exe = shutil.which("python") or shutil.which("python3")
+    if py_exe:
+        return _subprocess_runner(
+            [py_exe, "-m", "pip"], f"python -m pip ({py_exe})")
+
+    # 2. sys.executable -m pip (dev mode / embedded)
+    if not getattr(sys, "frozen", False):
+        return _subprocess_runner(
+            [sys.executable, "-m", "pip"], "python -m pip (sys)")
+
+    # 3. Bundled runtime Python (embedded distribution)
     _script_dir = Path(os.path.abspath(sys.argv[0])).parent
     _app_root = _script_dir.parent
     for candidate in [
-        _app_root / "runtime" / "python.exe",   # embedded dist layout
-        _script_dir / "runtime" / "python.exe",  # dev mode fallback
+        _app_root / "runtime" / "python.exe",
+        _script_dir / "runtime" / "python.exe",
     ]:
         if candidate.exists():
             return _subprocess_runner(
                 [str(candidate), "-m", "pip"],
                 f"bundled runtime ({candidate})")
-
-    # 2. sys.executable -m pip (dev mode)
-    if not getattr(sys, "frozen", False):
-        return _subprocess_runner(
-            [sys.executable, "-m", "pip"], "python -m pip (dev)")
-
-    # 3. pip on PATH
-    pip_exe = shutil.which("pip") or shutil.which("pip3")
-    if pip_exe:
-        return _subprocess_runner([pip_exe], f"pip ({pip_exe})")
-
-    # 4. python on PATH
-    py_exe = shutil.which("python") or shutil.which("python3")
-    if py_exe:
-        return _subprocess_runner(
-            [py_exe, "-m", "pip"], f"python -m pip ({py_exe})")
 
     return None, None
 
@@ -155,10 +151,14 @@ def run_auto_install(status_cb=None, done_cb=None):
             if status_cb:
                 status_cb(f"Downloading ML packages via {pip_source}…")
 
+            # Install to .lib (portable) or ML_DIR (fallback)
+            target = str(_LIB_DIR) if _LIB_DIR.exists() else str(ML_DIR)
+            _LIB_DIR.mkdir(parents=True, exist_ok=True)
             rc = pip_fn([
                 "install"] + _PACKAGES + [
-                "--target", str(ML_DIR),
+                "--target", target,
                 "--no-warn-script-location",
+                "--disable-pip-version-check",
             ])
             log.info("pip returned: %s", rc)
 
